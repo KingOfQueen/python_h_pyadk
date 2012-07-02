@@ -1,0 +1,5 @@
+# Android Open Accessory devices
+# Copy to /etc/udev/rules.d to grant access for group plugdev.
+
+# Android Open Accessory device with or without ADB
+SUBSYSTEM=="usb", ATTRS{idVendor}=="18d1", ATTRS{idProduct}=="2d0[01]", GROUP="plugdev", MODE="0660"
