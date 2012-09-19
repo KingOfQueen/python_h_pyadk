@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.6
+#!/usr/bin/env python2
 """\
 Handbag device interface.
 Copyright (C) Christian Unhold 2011, all rights reserved.
@@ -23,6 +23,7 @@ class Handbag:
 		assert length == 3
 		self.log("read(3)")
 		data = self.aa.read(3)
+		self.log("...read(3) = %s" % (data,)) 
 		assert data == "HB\01"
 		
 if __name__ == "__main__":

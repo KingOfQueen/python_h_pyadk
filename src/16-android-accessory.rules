@@ -3,3 +3,6 @@
 
 # Android Open Accessory device with or without ADB
 SUBSYSTEM=="usb", ATTRS{idVendor}=="18d1", ATTRS{idProduct}=="2d0[01]", GROUP="plugdev", MODE="0660"
+
+# Samsung Galaxy Nexus 
+SUBSYSTEM=="usb", ATTRS{idVendor}=="04e8", ATTRS{idProduct}=="685c", GROUP="plugdev", MODE="0660"

@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.6
+#!/usr/bin/env python2
 """
 Android Open Accessory device interface.
 Copyright (C) Christian Unhold 2011, all rights reserved.
@@ -13,9 +13,21 @@ import time, logging
 import usb.core, usb.util
 # PyUSB 1.0 from http://sourceforge.net/projects/pyusb/
 
-VENDOR_ID_GOOGLE = 0x18D1 # Android Accessory mode, Nexus One
-VENDOR_ID_ONDA = 0x19D2 # ZTE Blade
-USB_PRODUCT_IDS = (0x2D00, 0x2D01) # Android accessory mode without/with ADB
+USB_VENDOR_ID_GOOGLE = 0x18D1
+
+ANDROID_DEVICE_IDS = {
+	(USB_VENDOR_ID_GOOGLE, 0x4e11) : "HTC Nexus One",
+	(0x04e8, 0x685c): "Samsung Galaxy Nexus",
+	(0x04e8, 0x6860): "Samsung Galaxy Nexus ADB or Galaxy S II (?)"}
+	# Add your device here
+
+ACCESSORY_PRODUCT_IDS = {
+	0x2D00: "Accessory",
+	0x2D01: "Accessory with ADB",
+	0x2D02: "Audio",
+	0x2D03: "Audio with ADB",
+	0x2D04: "Accessory with Audio",
+	0x2D05: "Accessory with Audio and ADB"}
 
 STRING_MANUFACTURER = 0
 STRING_MODEL = 1
@@ -27,26 +39,33 @@ STRING_SERIAL = 5
 GET_PROTOCOL = 51
 SEND_STRING = 52
 START = 53
+REGISTER_HID = 54
+UNREGISTER_HID = 55
+SET_HID_REPORT_DESC = 56
+SEND_HID_EVENT = 57
 
 STRINGS_ADK = {
-	STRING_MANUFACTURER : "Google, Inc.",
-	STRING_MODEL :        "DemoKit",
-	STRING_DESCRIPTION :  "DemoKit Arduino Board",
-	STRING_VERSION :      "1.0",
-	STRING_URI :          "http://www.android.com",
-	STRING_SERIAL :       "0000000012345678"}
+	STRING_MANUFACTURER: "Google, Inc.",
+	STRING_MODEL:        "DemoKit",
+	STRING_DESCRIPTION:  "DemoKit Arduino Board",
+	STRING_VERSION:      "1.0",
+	STRING_URI:          "http://www.android.com",
+	STRING_SERIAL:       "0000000012345678"}
 
 STRINGS_HANDBAG = {
-	STRING_MANUFACTURER : "rancidbacon.com",
-	STRING_MODEL :        "Handbag",
-	STRING_DESCRIPTION :  "Handbag (Arduino Board)",
-	STRING_VERSION :      "0.1",
-	STRING_URI :          "http://rancidbacon.com",
-	STRING_SERIAL :       "0000000000000001"}
+	STRING_MANUFACTURER: "rancidbacon.com",
+	STRING_MODEL:        "Handbag",
+	STRING_DESCRIPTION:  "Handbag (Arduino Board)",
+	STRING_VERSION:      "0.1",
+	STRING_URI:          "http://rancidbacon.com",
+	STRING_SERIAL:       "0000000000000001"}
+
+def is_android_device(device):
+	return (device.idVendor, device.idProduct) in ANDROID_DEVICE_IDS
 
 def is_accessory_device(device):
-	return device.idVendor == VENDOR_ID_GOOGLE and \
-		device.idProduct in USB_PRODUCT_IDS
+	return device.idVendor == USB_VENDOR_ID_GOOGLE and \
+		device.idProduct in ACCESSORY_PRODUCT_IDS
 
 class AndroidDevice:
 	def __init__(self, device):
@@ -71,9 +90,9 @@ class AndroidDevice:
 		assert length == len(data)
 
 	def switch_device(self, strings):
-		self.protocol = self.get_protocol()
-		if self.protocol != 1:
-			raise IOError("Protocol version not supported")
+		self.protocol = protocol = self.get_protocol()
+		if protocol < 1:
+			raise IOError("Protocol version %d not supported" % (protocol,))
 		for index, string in strings.iteritems():
 			self.send_string(index, string)
 		rt = usb.util.build_request_type(usb.util.CTRL_OUT,
@@ -109,10 +128,10 @@ class AndroidAccessory:
 		assert self.interface.bNumEndpoints == 2
 		for endpoint in self.interface:
 			address = endpoint.bEndpointAddress
-			if address == 0x03:
-				self.endpoint_out = endpoint
-			elif address == 0x83:
+			if usb.util.endpoint_direction(address) == usb.util.ENDPOINT_IN:
 				self.endpoint_in = endpoint
+			else: # ENDPOINT_OUT
+				self.endpoint_out = endpoint
 
 	def read(self, length, timeout=None):
 		return self.endpoint_in.read(length, timeout)
@@ -123,30 +142,53 @@ class AndroidAccessory:
 def open(strings=STRINGS_HANDBAG):
 	def debug(string):
 		logging.info(string)
-	for i in range(2):
-		debug("usb.core.find(idVendor=%#x)" % (VENDOR_ID_GOOGLE,))
-		device = usb.core.find(idVendor=VENDOR_ID_GOOGLE)
-		if not device:
-			debug("No device found")
-			return None
-		if is_accessory_device(device):
-			debug("Android Accessory device found")
-			android_accessory = AndroidAccessory(device)
-			debug("android_accessory.configure_android()")
-			android_accessory.configure_android()
-			return android_accessory
+	def get_first_device():
+		debug("usb.core.find(custom_match=is_android_device)")
+		device = usb.core.find(custom_match=is_android_device)
+		if device:
+			device_id = (device.idVendor, device.idProduct)
+			description = ANDROID_DEVICE_IDS[device_id]
+			debug("Device found: %s" % (description,))
+		else:
+			debug("No device found.")
+		return device
+	def get_first_accessory():
+		debug("usb.core.find(custom_match=is_accessory_device)")
+		device = usb.core.find(custom_match=is_accessory_device)
+		if device:
+			description = ACCESSORY_PRODUCT_IDS[device.idProduct]
+			debug("Device found: %s" % (description,))
+		else:
+			debug("No device found.")
+		return device
+	device = get_first_accessory() or get_first_device()
+	if not device:
+		debug("No device found")
+		return None
+	if not is_accessory_device(device):
 		try:
 			android_device = AndroidDevice(device)
 			debug("Android device found")
 			debug("android_device.switch_device(strings)")
 			android_device.switch_device(strings)
 			del android_device, device
+			time.sleep(1)
 		except Exception as e:
 			debug(e)
 			debug("switch_device() failed (vendor requests not supported?)")
 			return None
-		time.sleep(1)
-	return None
+		debug("Looking for switched device")
+		device = get_first_accessory()
+		if not device:
+			debug("Switched device not found")
+			return None
+	assert(is_accessory_device(device))
+	debug("Android Accessory device found: %s" % (
+		ACCESSORY_PRODUCT_IDS[device.idProduct],))
+	android_accessory = AndroidAccessory(device)
+	debug("android_accessory.configure_android()")
+	android_accessory.configure_android()
+	return android_accessory
 
 def test():
 	logging.root.setLevel(logging.INFO)
@@ -160,7 +202,7 @@ def test():
 	if aa:
 		print " Found."
 		print "Check for popup!"
-		print "Use AndroidAccessory instance aa to communicate with device."
+		print "Use instance \'aa\' to communicate with device."
 	else:
 		print " Timeout."
 		print "No device found."
