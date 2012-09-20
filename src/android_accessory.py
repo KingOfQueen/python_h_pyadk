@@ -17,13 +17,20 @@ USB_VENDOR_ID_GOOGLE = 0x18D1
 
 ANDROID_DEVICE_IDS = {
 	(USB_VENDOR_ID_GOOGLE, 0x4e11) : "HTC Nexus One",
+	(USB_VENDOR_ID_GOOGLE, 0x4e12) : "HTC Nexus One ADB",	
+	(USB_VENDOR_ID_GOOGLE, 0x4e21) : "Samsung Nexus S",
+	(USB_VENDOR_ID_GOOGLE, 0x4e22) : "Samsung Nexus S ADB",	
 	(0x04e8, 0x685c): "Samsung Galaxy Nexus",
-	(0x04e8, 0x6860): "Samsung Galaxy Nexus ADB or Galaxy S II (?)"}
+	(0x04e8, 0x6860): "Samsung Galaxy Nexus ADB"}
 	# Add your device here
 
 ACCESSORY_PRODUCT_IDS = {
 	0x2D00: "Accessory",
 	0x2D01: "Accessory with ADB",
+	0x2D04: "Accessory with Audio",
+	0x2D05: "Accessory with Audio and ADB"}
+
+AUDIO_PRODUCT_IDS = {
 	0x2D02: "Audio",
 	0x2D03: "Audio with ADB",
 	0x2D04: "Accessory with Audio",
@@ -43,6 +50,7 @@ REGISTER_HID = 54
 UNREGISTER_HID = 55
 SET_HID_REPORT_DESC = 56
 SEND_HID_EVENT = 57
+SET_AUDIO_MODE = 58
 
 STRINGS_ADK = {
 	STRING_MANUFACTURER: "Google, Inc.",
@@ -89,7 +97,26 @@ class AndroidDevice:
 			data_or_wLength=data)
 		assert length == len(data)
 
-	def switch_device(self, strings):
+	def switch_device(self, strings, to_audio=False):
+		assert strings or to_audio
+		protocol = self.get_protocol()
+		if protocol < 1:
+			raise IOError("Android Accessory mode not supported")	
+		if protocol < 2 and to_audio:
+			raise IOError("Audio not supported")
+		if strings:
+			for index, string in strings.iteritems():
+				self.send_string(index, string)
+		rt = usb.util.build_request_type(usb.util.CTRL_OUT,
+			usb.util.CTRL_TYPE_VENDOR, usb.util.CTRL_RECIPIENT_DEVICE)
+		if to_audio:
+			length = self.device.ctrl_transfer(rt, SET_AUDIO_MODE, 1)
+			assert length == 0
+		length = self.device.ctrl_transfer(rt, START)
+		assert length == 0
+		del self.device
+		
+	def switch_device_old(self, strings):
 		self.protocol = protocol = self.get_protocol()
 		if protocol < 1:
 			raise IOError("Protocol version %d not supported" % (protocol,))
@@ -139,64 +166,63 @@ class AndroidAccessory:
 	def write(self, data, timeout=None):
 		return self.endpoint_out.write(data, timeout)
 
-def open(strings=STRINGS_HANDBAG):
-	def debug(string):
-		logging.info(string)
-	def get_first_device():
-		debug("usb.core.find(custom_match=is_android_device)")
-		device = usb.core.find(custom_match=is_android_device)
-		if device:
-			device_id = (device.idVendor, device.idProduct)
-			description = ANDROID_DEVICE_IDS[device_id]
-			debug("Device found: %s" % (description,))
-		else:
-			debug("No device found.")
-		return device
-	def get_first_accessory():
-		debug("usb.core.find(custom_match=is_accessory_device)")
-		device = usb.core.find(custom_match=is_accessory_device)
-		if device:
-			description = ACCESSORY_PRODUCT_IDS[device.idProduct]
-			debug("Device found: %s" % (description,))
-		else:
-			debug("No device found.")
-		return device
-	device = get_first_accessory() or get_first_device()
+def _get_first_device():
+	logging.info("usb.core.find(custom_match=is_android_device)")
+	device = usb.core.find(custom_match=is_android_device)
+	if device:
+		device_id = (device.idVendor, device.idProduct)
+		description = ANDROID_DEVICE_IDS[device_id]
+		logging.info("Device found: %s" % (description,))
+	else:
+		logging.info("No device found.")
+	return device
+
+def _get_first_accessory():
+	logging.info("usb.core.find(custom_match=is_accessory_device)")
+	device = usb.core.find(custom_match=is_accessory_device)
+	if device:
+		description = ACCESSORY_PRODUCT_IDS[device.idProduct]
+		logging.info("Device found: %s" % (description,))
+	else:
+		logging.info("No device found.")
+	return device
+
+def open(strings):
+	device = _get_first_accessory() or _get_first_device()
 	if not device:
-		debug("No device found")
+		logging.info("No device found")
 		return None
 	if not is_accessory_device(device):
 		try:
 			android_device = AndroidDevice(device)
-			debug("Android device found")
-			debug("android_device.switch_device(strings)")
+			logging.info("Android device found")
+			logging.info("android_device.switch_device(strings)")
 			android_device.switch_device(strings)
 			del android_device, device
 			time.sleep(1)
 		except Exception as e:
-			debug(e)
-			debug("switch_device() failed (vendor requests not supported?)")
+			logging.info(e)
+			logging.info("switch_device() failed (vendor requests not supported?)")
 			return None
-		debug("Looking for switched device")
-		device = get_first_accessory()
+		logging.info("Looking for switched device")
+		device = _get_first_accessory()
 		if not device:
-			debug("Switched device not found")
+			logging.info("Switched device not found")
 			return None
 	assert(is_accessory_device(device))
-	debug("Android Accessory device found: %s" % (
+	logging.info("Android Accessory device found: %s" % (
 		ACCESSORY_PRODUCT_IDS[device.idProduct],))
 	android_accessory = AndroidAccessory(device)
-	debug("android_accessory.configure_android()")
+	logging.info("android_accessory.configure_android()")
 	android_accessory.configure_android()
 	return android_accessory
 
-def test():
-	logging.root.setLevel(logging.INFO)
+def test_accessory():
 	global aa
 	aa = None
 	print "Waiting for device..."
 	for i in range(10):
-		aa = open()
+		aa = open(STRINGS_HANDBAG)
 		if aa: break
 		time.sleep(1)
 	if aa:
@@ -207,5 +233,24 @@ def test():
 		print " Timeout."
 		print "No device found."
 
+def test_audio():
+	print "Waiting for device..."
+	for i in range(10):
+		device = _get_first_device()
+		if device: break
+		time.sleep(1)
+	if device:
+		print " Found."
+		print "Enable audio..."
+		android_device = AndroidDevice(device)
+		android_device.switch_device(strings=STRINGS_HANDBAG, to_audio=True)
+		del android_device, device
+		time.sleep(1)
+		print " Audio enabled."
+	else:
+		print " Timeout."
+		print "No device found."
+
 if __name__ == "__main__":
-	test()
+	logging.root.setLevel(logging.INFO)
+	test_accessory()
